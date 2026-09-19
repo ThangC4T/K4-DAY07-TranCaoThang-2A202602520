@@ -1,10 +1,15 @@
-from __future__ import annotations
-
 import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv(*args, **kwargs):
+        return False
 
 from src.agent import KnowledgeBaseAgent
 from src.embeddings import (
@@ -21,13 +26,37 @@ from src.models import Document
 from src.store import EmbeddingStore
 
 SAMPLE_FILES = [
+    "data/university/course-registration.md",
+    "data/university/library-services.md",
+    "data/university/scholarship-policy.md",
+    "data/university/dormitory-regulations.md",
+    "data/university/faculty-grade-submission.md",
+    "data/university/exam-re-evaluation.md",
     "data/python_intro.txt",
     "data/vector_store_notes.md",
     "data/rag_system_design.md",
-    "data/customer_support_playbook.txt",
-    "data/chunking_experiment_report.md",
-    "data/vi_retrieval_notes.md",
 ]
+
+
+def parse_frontmatter(raw_text: str) -> tuple[dict, str]:
+    """Parse YAML front matter if present."""
+    if raw_text.startswith("---"):
+        parts = raw_text.split("---", 2)
+        if len(parts) >= 3:
+            header = parts[1]
+            body = parts[2].strip()
+            meta: dict[str, str] = {}
+            for line in header.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if ":" in line:
+                    key, val = line.split(":", 1)
+                    # Strip inline comments
+                    clean_val = val.split("#")[0].strip().strip('"').strip("'")
+                    meta[key.strip()] = clean_val
+            return meta, body
+    return {}, raw_text
 
 
 def load_documents_from_files(file_paths: list[str]) -> list[Document]:
@@ -46,12 +75,21 @@ def load_documents_from_files(file_paths: list[str]) -> list[Document]:
             print(f"Skipping missing file: {path}")
             continue
 
-        content = path.read_text(encoding="utf-8")
+        raw_content = path.read_text(encoding="utf-8")
+        frontmatter_meta, content = parse_frontmatter(raw_content)
+
+        metadata = {
+            "source": str(path),
+            "extension": path.suffix.lower(),
+            **frontmatter_meta,
+        }
+
+        doc_id = frontmatter_meta.get("doc_id", path.stem)
         documents.append(
             Document(
-                id=path.stem,
+                id=doc_id,
                 content=content,
-                metadata={"source": str(path), "extension": path.suffix.lower()},
+                metadata=metadata,
             )
         )
 
